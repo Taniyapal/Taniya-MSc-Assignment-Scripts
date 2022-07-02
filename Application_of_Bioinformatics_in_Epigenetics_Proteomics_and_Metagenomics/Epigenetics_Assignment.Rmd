@@ -1,0 +1,370 @@
+---
+title: "Epigenetics Assignment"
+author: "Taniya Pal"
+date: "28th Nov 2021"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# 1. Introduction
+Analysis of Illumina methylation microarray data of blood sample through minfi package. 
+
+# 2. Preprocessing the data 
+
+## 2.1 Importing the Data
+```{r}
+rm(list=ls())
+graphics.off()
+base_folder="/Users/taniyapal/Downloads/Assignment_data"
+setwd(base_folder)
+data_folder=file.path(base_folder,"idats")
+library(minfi)
+targets=read.metharray.sheet(data_folder)
+head(targets)
+```
+
+## 2.2 Reading the red and green signal intensities into RGset
+
+```{r}
+targets_450=targets[1:12,]
+targets_Epic=targets[13:20, ]
+RGset_450=read.metharray.exp(targets=targets_450)
+RGset_Epic=read.metharray.exp(targets=targets_Epic)
+RGset=combineArrays(RGset_450, RGset_Epic, outType="IlluminaHumanMethylation450k", verbose=T)
+head(RGset)
+
+```
+
+## 2.3 Setting "Sample Names" as column names of RGset
+```{r}
+colnames(RGset)=targets$Sample_Name
+head(RGset)
+```
+
+## 2.4 Accesing the phenotype Data
+
+```{r}
+pheno_data=pData(RGset)
+```
+
+## 2.5 Detecting the p values
+
+```{r}
+library(IlluminaHumanMethylation450kmanifest)
+p_value=detectionP(RGset, type="m+u")
+head(p_value)
+```
+
+## 2.6 background_correction
+
+```{r}
+RGset=bgcorrect.illumina(RGset)
+```
+
+## 2.7 Preparing Mset values
+
+```{r}
+Mset=preprocessRaw(RGset)
+```
+
+## 2.8 Creating the signal density plots
+
+```{r}
+densityPlot(Mset, sampGroups = pheno_data$Sample_Name)
+densityPlot(Mset, sampGroups = pheno_data$Sample_Group)
+densityBeanPlot(Mset, sampGroups = pheno_data$Sample_Group)
+densityBeanPlot(Mset, sampGroups = pheno_data$Sample_Name)
+mdsPlot(Mset, sampGroups = pheno_data$Sample_Name)
+```
+
+## 2.9 Quality Control
+
+```{r}
+library(IlluminaHumanMethylation450kmanifest)
+quality=minfiQC(Mset)
+```
+
+## 2.10 Plotting Quality Control
+
+```{r}
+plotQC(quality$qc)
+```
+
+# 2.11. Infering the sex of the samples
+```{r}
+quality_info=quality$qc
+sample_gender=quality_info[,"predictedSex",drop=F]
+targets_gender=targets[,c("Sample_Name","sex")]
+sample_gender$predictedSex
+targets_gender
+```
+
+# 2.12. Sample duplication
+
+## 2.12.1 Extracting the SNPs
+```{r}
+snps=getSnpBeta(RGset)
+```
+
+## 2.12.2 Plotting of heatmap to check sample duplication
+
+```{r}
+library(ggplot2)
+library(reshape2)
+data=melt(cor(snps))
+ggplot(data=data, aes(x=Var1, y=Var2)) +
+  geom_tile(aes(fill=value)) + 
+  scale_fill_gradient2(limits=c(-1, 1)) + 
+  theme(axis.text.x = element_text(angle = 90)) +
+  ggtitle("Samples similarity based on correlations of SNP control probes") +
+  xlab(NULL) + ylab(NULL)
+```
+
+## 2.12.3 Discarding the duplicate samples (here the duplicate sample pairs are (1,9) and (17,18))
+
+```{r}
+Mset=Mset[,c(-1,-17)]
+```
+
+# 2.13. Filtering samples and probes
+
+## 2.13.1 Updating the p value after correction of sample duplication
+
+```{r}
+p_value= p_value[,colnames(p_value)%in%colnames(Mset)]
+```
+
+## 2.13.2 Filtering of samples
+
+```{r}
+goodSample=colSums(p_value<=10e-16) >= 0.5*nrow(p_value)
+Msetfiltered=Mset[,goodSample]
+```
+
+## 2.13.3 Filtering of probes
+
+```{r}
+goodLoci=rownames(p_value)[rowSums(p_value<=1e-16) >= 0.9*ncol(p_value)]
+Msetfiltered=Msetfiltered[goodLoci,]
+```
+
+# 2.14 Removing the probe that contain common SNPs
+
+```{r}
+Gset=mapToGenome(Msetfiltered)
+Gset=dropLociWithSnps(Gset, snps=c("SBE","CpG"), maf=0.05)
+
+```
+# 2.15 Extracting the required information from Gset
+
+```{r}
+beta=getBeta(Gset)
+M=getM(Gset)
+annotations=getAnnotation(Gset)
+
+```
+
+# 2.16 Normalization
+
+## 2.16.1 Normalizing the data
+```{r}
+MsetNorm=preprocessSWAN(RGset,Msetfiltered)
+
+```
+
+## 2.16.2 Plotting the normalized and unnormalized data
+
+```{r}
+#Comparing the before and after normalization data between probes
+for(i in 1:ncol(MsetNorm)){
+	plotBetasByType(Msetfiltered[,i], main = paste("Sample",i,":Raw"))
+}
+for(i in 1:ncol(MsetNorm)){
+	plotBetasByType(MsetNorm[,i], main = paste("Sample",i,":Normalised"))
+}
+
+#Between samples
+densityPlot(Msetfiltered, main = "Raw (all samples)", legend=F)
+densityPlot(MsetNorm, main = "Normalized (all samples)", legend=F)
+
+```
+
+# 2.17 Batch Correction
+
+```{r}
+#Before Batch Correction
+library(ggfortify)
+rownames(targets)=targets$Sample_Name
+targets_filtered=targets[colnames(Msetfiltered),]
+
+## Get the beta values for QC-ed normalised Mset
+betaNorm<-getBeta(MsetNorm, type="Illumina")
+
+# Get principal components
+prcompNorm <- prcomp(t(na.omit(betaNorm)))
+
+
+# Plot the first two PCs
+autoplot(prcompNorm, 
+         data=targets_filtered,
+         main="Before batch correction", colour="Batch")
+
+#After batch correction
+
+library(sva)
+betaCombat<-ComBat(betaNorm, batch=targets_filtered$Batch)
+prcompCombat<-prcomp(t(na.omit(betaCombat)))
+autoplot(prcompCombat, 
+         data=targets_filtered,
+         main="After batch correction", colour="Batch")
+
+
+```
+# 3. Regression Modelling
+
+## 3.1 Calculating blood cell count
+```{r}
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+library(IlluminaHumanMethylation450kmanifest)
+library(FlowSorted.Blood.450k)
+
+RGset_filtered <- RGset[,colnames(Msetfiltered)]
+RGset450 <- convertArray(RGset_filtered,outType=c("IlluminaHumanMethylation450k"))
+estCellCounts <- estimateCellCounts(RGset450, compositeCellType = "Blood", cellTypes = c("CD8T", "CD4T", "NK", "Bcell", "Mono", "Eos","Neu"))
+corr_data=melt(cor(estCellCounts))
+ggplot(data=corr_data, aes(x=Var1, y=Var2)) +
+  geom_tile(aes(fill=value)) + 
+  scale_fill_gradient2(limits=c(-1, 1)) + 
+  theme(axis.text.x = element_text(angle = 90)) +
+  ggtitle("Correlation between each blood cell type") +
+  xlab(NULL) + ylab(NULL)
+
+```
+
+## 3.2 Loading the data
+
+```{r}
+phenotypes<-read.csv(file.path("/Users/taniyapal/Downloads/Assignment_data","covariates.csv"),row.names=1)
+phenotypes=phenotypes[c(-1,-17), ]
+updated_phenotype=cbind(phenotypes, estCellCounts)
+
+head(updated_phenotype)
+```
+
+## 3.3 Analysis
+
+```{r}
+lm_cell<-as.formula('updated_phenotype$BMI ~ beta[i,] + 
+                    updated_phenotype$sex+
+               
+                    updated_phenotype$CD8T + 
+                    updated_phenotype$CD4T + 
+                    updated_phenotype$NK + 
+                    updated_phenotype$Bcell + 
+                    updated_phenotype$Mono + 
+                    updated_phenotype$Eos + 
+                    updated_phenotype$Neu')
+
+nvar<-nrow(beta)
+res<-matrix(ncol=4, nrow=nvar)
+for(i in 1:nvar){
+ 
+	fit<-summary(glm(lm_cell ))
+	
+	
+	res[i,] <- fit$coefficients[2,]
+	
+}
+
+#how many CpGs passed p_value <0.05
+colnames(res) <-c('beta','SE', 'tval','pval') 
+rownames(res)<-rownames(beta)
+before_mtc=which(res[ ,"pval"]<0.05)
+write.csv(before_mtc, file="Passed CpGs before multiple testing correction.csv")
+
+```
+## 3.4 Multiple testing correction
+
+```{r}
+res_after <- cbind(res, fdr=p.adjust(res[,"pval"],"BH"))
+after_mtc=which(res_after[,"fdr"]<0.05)
+write.csv(after_mtc, file="Passed CpGs after multiple testing correction.csv")
+
+```
+
+#4. Plotting
+
+
+```{r}
+library(ggplot2)
+
+sig_probe=res_after[,"pval"]<0.05
+write.csv(sig_probe, file="probeIDs.txt")
+
+notsig_probe=res_after[,"pval"]>=0.05
+#Volcano Plot
+ggplot(data=res_after, aes(x=beta, y=-log10(pval), col=sig_probe)) + geom_point() + theme_minimal()
+```
+
+#5. Annotation
+
+```{r}
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+ann450k = getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+ann450kSub <- ann450k[match(rownames(M),ann450k$Name),
+                      c(1:4,12:19,24:ncol(ann450k))]
+
+all(rownames(res) %in% rownames(ann450kSub))
+map1 <- ann450kSub[,c("chr")]
+map1$PROBEID=rownames(ann450kSub)
+map1$MAPINFO=res[, "pval"]
+map2<-map1[rownames(res),]
+map2=map2[,-2]
+
+colnames(map2)=c("CHR", "PROBEID", "MAPINFO")
+
+sigMap<-ann450kSub[sig_probe, ]
+sigGene<-sigMap$UCSC_RefGene_Name
+write.table(sigGene,file="Significant_gene_list.txt",row.names=F,col.names=F,quote=F)
+write.table(map2,file="map_file.txt",sep="\t",row.names=F,quote=F)
+
+write.table(map2,file="map_file.txt",sep="\t",row.names=F,quote=F)
+length(unique(sigGene))
+
+
+```
+
+#6. Enrichment Analysis
+
+```{r}
+sigprobe=as.data.frame(sig_probe)
+sCpGs <- as.character(rownames(sigprobe))
+aCpGS=as.character(rownames(ann450kSub))
+library(missMethyl)
+go <- gometh(sig.cpg=sCpGs, all.cpg=aCpGs, collection="GO", plot.bias=TRUE)
+Gene_onto=topGSA(go, number=20)
+write.csv(Gene_onto, file="Gene Onotology Analysis.txt")
+
+kegg <- gometh(sig.cpg=sCpGs, all.cpg=aCpGs, collection="KEGG", plot.bias=TRUE)
+kegg_pathway=topGSA(kegg, number=20)
+write.csv(kegg_pathway, file="Kegg analysis.txt")
+
+```
+
+
+##session info
+```{r}
+ls()
+Sys.time()
+sessionInfo()
+```
+
+
