@@ -16,3 +16,14 @@ In this module, Taniya had to perform Exploratory Data Analysis (EDA) on given f
 Taniya had to analyse transcriptomic datasets of potato, and find out regions of potato genome which were responsible for breaking of early dormancy in potato and premature sprouting, which is the reason of spoilage of crop harvests every year. She had to produce a report stating all her results and their interpretation. She used tools such as HISAT, Bowtie, SNPEff, FASTC, Trimmomatic etc.
 
 **Application of Bioinformatics in Epigenetics, Proteomics and Metagenomics**
+
+The assignment required Taniya to analyse samples of  mixed batches from Illumina Inifinium HumanMethylation450 and EpicMethylation Beadchips from a study that investigated obesity. She had to explore the association of BMI on DNA methylation and draw Manhattan and QQ plots for the same. She also had to make a homology-modelled structure for a protein of an unknown organism and highlight the Tyrosine residue which is the key to the binding interface in the human protein on the structural model of the unknown organism.
+
+**Machine Learning for Metabolomics**
+
+The assignment required to assess the performance of machine learning models such as classification model and regression model. She had to compare the perform of various machine learning algorithms such as KNN, SVM, Random Forest.
+
+**Programming Using Java**
+
+She had to create a GUI which uploads a fasta file and a .ommsa file, parses the two files and highlights the regions of the amino acids present in the .ommsa file in the amino acid fasta file.
+
